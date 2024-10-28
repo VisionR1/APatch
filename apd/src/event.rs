@@ -117,7 +117,63 @@ pub fn systemless_bind_mount(module_dir: &str) -> Result<()> {
     //mount("tmpfs",utils::get_tmp_path(),"tmpfs",combined_flags,"")?;
  
     // construct bind mount params
-    info!("unimplemented");
+    let tmp_path = format!("{}/ap/",utils::get_tmp_path());
+    let dir = fs::read_dir(module_dir);
+    let Ok(dir) = dir else {
+        bail!("open {} failed", defs::MODULE_DIR);
+    };
+    let partition = vec!["system", "vendor", "product", "system_ext", "odm", "oem"];
+
+    for entry in dir.flatten() {
+        let module = entry.path();
+        if !module.is_dir() {
+            continue;
+        }
+        let disabled = module.join(defs::DISABLE_FILE_NAME).exists();
+        if disabled {
+            info!("module: {} is disabled, ignore!", module.display());
+            continue;
+        }
+        let skip_mount = module.join(defs::SKIP_MOUNT_FILE_NAME).exists();
+        if skip_mount {
+            info!("module: {} skip_mount exist, skip!", module.display());
+            continue;
+        }
+        for part in &partition {
+            let part_path = Path::new(&module).join(part);
+            if part_path.is_dir() {
+
+                let mut stack = vec![part_path.display().to_string()]; 
+
+                while let Some(current_dir) = stack.pop() {
+                    for entry in fs::read_dir(&current_dir)? {
+                        let entry = entry?;
+                        let path = entry.path();
+                        println!("{:?}", path);
+                        if path.is_dir() {
+                            stack.push(path.to_str().unwrap().to_string());
+                        }else{
+                            let relative_path = path.strip_prefix(part_path.clone()).unwrap();
+                
+                            let target_path: PathBuf = Path::new(&tmp_path).join(relative_path);
+
+                            if let Some(parent) = target_path.parent() {
+                                fs::create_dir_all(parent)?;
+                            }
+
+                            info!("[bind_mount] {} copy to {}",path.display(), target_path.display());
+                            fs::copy(&path, &target_path)?;
+                            info!("[bind_mount] {} bind to {}/{}", target_path.display(), part, relative_path.display());
+
+                            mount::bind_mount(Path::new(&target_path),Path::new(format!("{}/{}",part, relative_path.display()).as_str()))?
+                        }
+                    }
+                }
+            }
+        }
+
+
+    }
 
 
     Ok(())
